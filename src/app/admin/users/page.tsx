@@ -1,4 +1,5 @@
 ﻿"use client";
+export const dynamic = "force-dynamic";
 
 import { Users, UserCheck, Clock, Shield } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";

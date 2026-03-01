@@ -1,4 +1,5 @@
 "use client";
+export const dynamic = "force-dynamic";
 
 import { useMemo, useState } from "react";
 import { Printer, GraduationCap, Trophy, TrendingUp, CheckCircle, BookOpen } from "lucide-react";
