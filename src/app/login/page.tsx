@@ -7,14 +7,17 @@ import { Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
+import { auth, db } from "@/lib/firebase";
 
 type Role = "student" | "admin";
 
-const roles: { value: Role; label: string; href: string }[] = [
-    { value: "student", label: "Student", href: "/student/dashboard" },
-    { value: "admin", label: "Administrator", href: "/admin/dashboard" },
+const roles: { value: Role; label: string }[] = [
+    { value: "student", label: "Student" },
+    { value: "admin", label: "Administrator" },
 ];
 
 export default function LoginPage() {
@@ -23,7 +26,7 @@ export default function LoginPage() {
     const [role, setRole] = useState<Role>("student");
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
-    const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
+    const [errors, setErrors] = useState<{ email?: string; password?: string; general?: string }>({});
 
     const validate = () => {
         const e: typeof errors = {};
@@ -36,10 +39,54 @@ export default function LoginPage() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!validate()) return;
+
         setLoading(true);
-        await new Promise((r) => setTimeout(r, 1000));
-        const target = roles.find((r) => r.value === role)?.href ?? "/student/dashboard";
-        window.location.href = target;
+        setErrors({});
+
+        try {
+            // Step 1 — Firebase Auth login
+            const userCredential = await signInWithEmailAndPassword(auth, email, password);
+            const user = userCredential.user;
+
+            // Step 2 — Fetch user role from Firestore users collection
+            const userDoc = await getDoc(doc(db, "users", user.uid));
+
+            if (!userDoc.exists()) {
+                setErrors({ general: "Account not found. Please contact admin." });
+                setLoading(false);
+                return;
+            }
+
+            const userData = userDoc.data();
+            const userRole = userData?.role;
+
+            // Step 3 — Check role matches selected tab
+            if (userRole !== role) {
+                setErrors({ general: `This account is registered as a ${userRole}. Please select the correct role.` });
+                setLoading(false);
+                return;
+            }
+
+            // Step 4 — Redirect based on role
+            if (userRole === "admin") {
+                window.location.href = "/admin/dashboard";
+            } else {
+                window.location.href = "/student/dashboard";
+            }
+
+        } catch (err: any) {
+            // Firebase error codes
+            if (err.code === "auth/user-not-found" || err.code === "auth/wrong-password" || err.code === "auth/invalid-credential") {
+                setErrors({ general: "Invalid email or password." });
+            } else if (err.code === "auth/too-many-requests") {
+                setErrors({ general: "Too many failed attempts. Please try again later." });
+            } else if (err.code === "auth/user-disabled") {
+                setErrors({ general: "This account has been disabled. Contact admin." });
+            } else {
+                setErrors({ general: "Login failed. Please try again." });
+            }
+            setLoading(false);
+        }
     };
 
     return (
@@ -88,6 +135,14 @@ export default function LoginPage() {
                     <Card className="border-slate-200 shadow-sm">
                         <CardContent className="pt-6">
                             <form onSubmit={handleSubmit} className="space-y-4">
+
+                                {/* General Error */}
+                                {errors.general && (
+                                    <div className="bg-red-50 border border-red-200 text-red-600 text-xs rounded-lg px-3 py-2.5">
+                                        ⚠️ {errors.general}
+                                    </div>
+                                )}
+
                                 {/* Role Selector */}
                                 <div className="space-y-1.5">
                                     <Label className="text-xs font-medium text-slate-700">Login as</Label>
@@ -150,7 +205,11 @@ export default function LoginPage() {
                                     {errors.password && <p className="text-xs text-red-500">{errors.password}</p>}
                                 </div>
 
-                                <Button type="submit" disabled={loading} className="w-full bg-[#20376b] hover:bg-[#1a2d54] text-white h-9">
+                                <Button
+                                    type="submit"
+                                    disabled={loading}
+                                    className="w-full bg-[#20376b] hover:bg-[#1a2d54] text-white h-9"
+                                >
                                     {loading ? (
                                         <span className="flex items-center gap-2">
                                             <span className="h-3.5 w-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
@@ -159,26 +218,13 @@ export default function LoginPage() {
                                     ) : "Sign In"}
                                 </Button>
 
-                                {/* Quick demo logins */}
-                                <div className="pt-1 text-center">
-                                    <p className="text-[10px] text-slate-400 mb-2">Quick Demo Access:</p>
-                                    <div className="flex gap-2 justify-center">
-                                        {roles.map((r) => (
-                                            <Link key={r.href} href={r.href} className="text-[10px] text-[#20376b] hover:underline">
-                                                {r.label}
-                                            </Link>
-                                        ))}
-                                    </div>
-                                </div>
                             </form>
                         </CardContent>
                     </Card>
 
                     <p className="mt-5 text-center text-xs text-slate-500">
-                        Don&apos;t have an account?{" "}
-                        <Link href="/register" className="text-[#20376b] font-medium hover:underline">
-                            Register
-                        </Link>
+                        Problems signing in?{" "}
+                        <span className="text-[#20376b] font-medium">Contact your administrator</span>
                     </p>
                 </div>
             </div>

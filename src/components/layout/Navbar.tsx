@@ -1,7 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import {
     Bell,
     Search,
@@ -19,22 +21,100 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
-import { User as UserType } from "@/types";
+import { auth, db } from "@/lib/firebase";
+import { signOut, onAuthStateChanged } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
 
 interface NavbarProps {
-    user: UserType;
     pendingCount?: number;
 }
 
-export function Navbar({ user, pendingCount = 0 }: NavbarProps) {
+type UserProfile = {
+    name: string;
+    email: string;
+    role: string;
+    department?: string;
+    photoURL?: string;
+};
+
+export function Navbar({ pendingCount = 0 }: NavbarProps) {
+    const router = useRouter();
+    const [user, setUser] = useState<UserProfile | null>(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        // Listen to Firebase Auth state
+        const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+            if (!firebaseUser) {
+                // Not logged in → redirect to login
+                router.push("/login");
+                return;
+            }
+
+            // Fetch profile from Firestore users collection
+            const userDoc = await getDoc(doc(db, "users", firebaseUser.uid));
+
+            if (userDoc.exists()) {
+                const data = userDoc.data();
+                setUser({
+                    name: data.full_name || firebaseUser.displayName || "User",
+                    email: firebaseUser.email || "",
+                    role: data.role || "student",
+                    department: data.department || "",
+                    photoURL: firebaseUser.photoURL || "",
+                });
+            } else {
+                // Fallback to Firebase Auth data if no Firestore doc
+                setUser({
+                    name: firebaseUser.displayName || firebaseUser.email || "User",
+                    email: firebaseUser.email || "",
+                    role: "student",
+                    photoURL: firebaseUser.photoURL || "",
+                });
+            }
+
+            setLoading(false);
+        });
+
+        return () => unsubscribe();
+    }, []);
+
+    const handleSignOut = async () => {
+        await signOut(auth);
+        router.push("/login");
+    };
+
     const getInitials = (name: string) =>
         name
             .split(" ")
             .map((n) => n[0])
             .join("")
-            .toUpperCase();
+            .toUpperCase()
+            .slice(0, 2);
+
+    // Show skeleton while loading
+    if (loading) {
+        return (
+            <header className="sticky top-0 z-50 w-full border-b border-slate-200 bg-white">
+                <div className="flex h-16 items-center gap-4 px-6">
+                    <Link href="/" className="flex items-center gap-3 mr-2 shrink-0">
+                        <Image src="/logo.svg" alt="Sahyadri College" width={155} height={38} className="h-9 w-auto" priority />
+                    </Link>
+                    <div className="ml-auto flex items-center gap-2">
+                        <div className="h-7 w-7 rounded-full bg-slate-200 animate-pulse" />
+                        <div className="hidden sm:block space-y-1">
+                            <div className="h-2.5 w-24 bg-slate-200 rounded animate-pulse" />
+                            <div className="h-2 w-16 bg-slate-100 rounded animate-pulse" />
+                        </div>
+                    </div>
+                </div>
+            </header>
+        );
+    }
+
+    if (!user) return null;
 
     return (
         <header className="sticky top-0 z-50 w-full border-b border-slate-200 bg-white">
@@ -80,7 +160,11 @@ export function Navbar({ user, pendingCount = 0 }: NavbarProps) {
                     </span>
 
                     {/* Notifications */}
-                    <Button variant="ghost" size="icon" className="relative h-8 w-8 text-slate-500 hover:text-[#20376b] hover:bg-slate-50">
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="relative h-8 w-8 text-slate-500 hover:text-[#20376b] hover:bg-slate-50"
+                    >
                         <Bell className="h-4 w-4" />
                         {pendingCount > 0 && (
                             <span className="absolute -top-0.5 -right-0.5 h-4 w-4 rounded-full bg-[#20376b] flex items-center justify-center text-[9px] font-bold text-white">
@@ -96,11 +180,20 @@ export function Navbar({ user, pendingCount = 0 }: NavbarProps) {
                                 variant="ghost"
                                 className="flex items-center gap-2 h-8 px-2 hover:bg-slate-50"
                             >
+                                {/* Avatar — shows photo if available, else initials */}
                                 <Avatar className="h-7 w-7 border border-slate-200">
+                                    {user.photoURL ? (
+                                        <AvatarImage
+                                            src={user.photoURL}
+                                            alt={user.name}
+                                            referrerPolicy="no-referrer"
+                                        />
+                                    ) : null}
                                     <AvatarFallback className="bg-[#20376b]/10 text-[#20376b] text-xs font-semibold">
                                         {getInitials(user.name)}
                                     </AvatarFallback>
                                 </Avatar>
+
                                 <div className="hidden sm:block text-left">
                                     <p className="text-xs font-medium text-slate-800 leading-tight">
                                         {user.name}
@@ -112,14 +205,32 @@ export function Navbar({ user, pendingCount = 0 }: NavbarProps) {
                                 <ChevronDown className="h-3 w-3 text-slate-400" />
                             </Button>
                         </DropdownMenuTrigger>
+
                         <DropdownMenuContent align="end" className="w-52">
                             <DropdownMenuLabel>
-                                <p className="text-sm font-medium text-slate-900">{user.name}</p>
-                                <p className="text-xs text-slate-500 font-normal mt-0.5">
-                                    {user.email}
-                                </p>
+                                {/* Larger avatar inside dropdown */}
+                                <div className="flex items-center gap-2.5 mb-1">
+                                    <Avatar className="h-9 w-9 border border-slate-200">
+                                        {user.photoURL ? (
+                                            <AvatarImage
+                                                src={user.photoURL}
+                                                alt={user.name}
+                                                referrerPolicy="no-referrer"
+                                            />
+                                        ) : null}
+                                        <AvatarFallback className="bg-[#20376b]/10 text-[#20376b] text-sm font-semibold">
+                                            {getInitials(user.name)}
+                                        </AvatarFallback>
+                                    </Avatar>
+                                    <div>
+                                        <p className="text-sm font-medium text-slate-900">{user.name}</p>
+                                        <p className="text-xs text-slate-500 font-normal mt-0.5">{user.email}</p>
+                                    </div>
+                                </div>
                             </DropdownMenuLabel>
+
                             <DropdownMenuSeparator />
+
                             <DropdownMenuItem className="cursor-pointer text-slate-700">
                                 <User className="mr-2 h-4 w-4" />
                                 Profile
@@ -128,15 +239,15 @@ export function Navbar({ user, pendingCount = 0 }: NavbarProps) {
                                 <Settings className="mr-2 h-4 w-4" />
                                 Settings
                             </DropdownMenuItem>
+
                             <DropdownMenuSeparator />
+
                             <DropdownMenuItem
                                 className="cursor-pointer text-rose-600 focus:text-rose-600 focus:bg-rose-50"
-                                asChild
+                                onClick={handleSignOut}
                             >
-                                <Link href="/login">
-                                    <LogOut className="mr-2 h-4 w-4" />
-                                    Sign Out
-                                </Link>
+                                <LogOut className="mr-2 h-4 w-4" />
+                                Sign Out
                             </DropdownMenuItem>
                         </DropdownMenuContent>
                     </DropdownMenu>

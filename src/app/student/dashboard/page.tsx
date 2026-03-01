@@ -1,94 +1,149 @@
 "use client";
 
+import { useMemo } from "react";
 import {
-    Trophy,
-    Clock,
-    CheckCircle,
-    XCircle,
-    Star,
-} from "lucide-react";
+    useStudentAuth,
+    useStudentAchievements,
+    computeCategoryStats,
+    profileToUser,
+} from "@/lib/hooks";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatCard } from "@/components/shared/StatCard";
-import { DataTable, StatusBadge, CategoryBadge, Column } from "@/components/shared/DataTable";
-import { ChartWrapper, CustomPieChart } from "@/components/shared/ChartComponents";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { DataTable, Column } from "@/components/shared/DataTable";
+import { CustomPieChart } from "@/components/shared/ChartComponents";
 import { Badge } from "@/components/ui/badge";
-import { currentStudent, myAchievements, categoryStats } from "@/lib/dummy-data";
-import { Achievement } from "@/types";
+import { Trophy, CheckCircle, Clock, XCircle } from "lucide-react";
+import { Achievement, AchievementStatus } from "@/types";
 
-const columns: Column<Achievement>[] = [
+const statusColors: Record<AchievementStatus, string> = {
+    approved: "bg-emerald-100 text-emerald-700",
+    pending: "bg-amber-100 text-amber-700",
+    rejected: "bg-red-100 text-red-700",
+};
+
+const categoryColors: Record<string, string> = {
+    Academic: "#3b82f6",
+    Research: "#8b5cf6",
+    Sports: "#10b981",
+    Cultural: "#f59e0b",
+    "Co-Curricular": "#ef4444",
+    Professional: "#6366f1",
+};
+
+const achievementColumns: Column<Achievement>[] = [
+    { key: "title", label: "Title" },
+    { key: "category", label: "Category" },
+    { key: "date", label: "Date" },
     {
-        key: "title", label: "Achievement", sortable: true, render: (_, row) => (
-            <div className="max-w-xs">
-                <p className="text-xs font-medium text-slate-900 truncate">{row.title}</p>
-                <p className="text-[11px] text-slate-400 mt-0.5">{row.date}</p>
-            </div>
-        )
+        key: "status",
+        label: "Status",
+        render: (val) => (
+            <Badge className={`${statusColors[val as AchievementStatus]} capitalize text-[10px]`}>
+                {String(val)}
+            </Badge>
+        ),
     },
-    { key: "category", label: "Category", render: (val) => <CategoryBadge category={String(val)} /> },
     {
-        key: "points", label: "Points", sortable: true, render: (val) => (
-            <span className="font-semibold text-[#20376b] text-xs">{String(val)} pts</span>
-        )
+        key: "points",
+        label: "Points",
+        render: (val, row) =>
+            row.status === "approved" ? String(val) : "—",
     },
-    { key: "status", label: "Status", render: (_, row) => <StatusBadge status={row.status} /> },
 ];
 
-export default function StudentDashboard() {
-    const totalPoints = myAchievements.reduce((s, a) => s + (a.status === "approved" ? a.points : 0), 0);
-    const approved = myAchievements.filter((a) => a.status === "approved").length;
-    const pending = myAchievements.filter((a) => a.status === "pending").length;
-    const rejected = myAchievements.filter((a) => a.status === "rejected").length;
+export default function StudentDashboardPage() {
+    const { student, loading: authLoading } = useStudentAuth();
+    const { achievements, loading: dataLoading } = useStudentAchievements(student?.uid);
 
-    const pieData = categoryStats.map((c) => ({ name: c.category, value: c.approved }));
+    const loading = authLoading || dataLoading;
+
+    const stats = useMemo(() => {
+        const approved = achievements.filter((a) => a.status === "approved");
+        const pending = achievements.filter((a) => a.status === "pending");
+        const rejected = achievements.filter((a) => a.status === "rejected");
+        const totalPoints = approved.reduce((s, a) => s + a.points, 0);
+        return { totalPoints, approved: approved.length, pending: pending.length, rejected: rejected.length };
+    }, [achievements]);
+
+    const catStats = useMemo(() => computeCategoryStats(achievements), [achievements]);
+
+    const pieData = useMemo(
+        () =>
+            catStats
+                .filter((c) => c.count > 0)
+                .map((c) => ({
+                    name: c.category,
+                    value: c.count,
+                    color: categoryColors[c.category] || "#94a3b8",
+                })),
+        [catStats]
+    );
+
+    if (loading || !student) {
+        return (
+            <div className="flex min-h-screen items-center justify-center">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#20376b] border-t-transparent" />
+            </div>
+        );
+    }
 
     return (
-        <DashboardLayout user={currentStudent} role="student" pendingCount={pending}>
-            {/* Page Header */}
-            <div className="mb-6">
-                <h1 className="text-xl font-bold text-slate-900">My Dashboard</h1>
-                <p className="text-sm text-slate-500 mt-0.5">
-                    Welcome back, {currentStudent.name.split(" ")[0]}! Here&apos;s your achievement summary.
-                </p>
-            </div>
+        <DashboardLayout user={profileToUser(student)} role="student">
+            <div className="space-y-6">
+                <div>
+                    <h1 className="text-2xl font-bold text-slate-900">
+                        Welcome back, {student.name.split(" ")[0]}!
+                    </h1>
+                    <p className="text-sm text-slate-500 mt-1">
+                        Here&apos;s a summary of your achievements and progress.
+                    </p>
+                </div>
 
-            {/* Stat Cards */}
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-6">
-                <StatCard title="Total Points" value={totalPoints} icon={Star} color="navy" trend={12} trendLabel="vs last month" />
-                <StatCard title="Approved" value={approved} icon={CheckCircle} color="emerald" trend={5} trendLabel="vs last month" />
-                <StatCard title="Pending Review" value={pending} icon={Clock} color="amber" />
-                <StatCard title="Rejected" value={rejected} icon={XCircle} color="rose" />
-            </div>
-
-            {/* Category Chart */}
-            <div className="grid gap-5 lg:grid-cols-3 mb-6">
-                <ChartWrapper title="By Category" description="Approved achievements per category">
-                    <CustomPieChart data={pieData} height={240} innerRadius={50} />
-                </ChartWrapper>
-            </div>
-
-            {/* Recent Achievements */}
-            <Card className="border-slate-200 shadow-sm">
-                <CardHeader className="pb-3 flex flex-row items-center justify-between">
-                    <div>
-                        <CardTitle className="text-base font-semibold text-slate-800">My Achievements</CardTitle>
-                        <p className="text-xs text-slate-500 mt-0.5">All submitted achievements and their status</p>
-                    </div>
-                    <Badge className="bg-[#20376b]/10 text-[#20376b] border-[#20376b]/20 text-[10px]">
-                        {myAchievements.length} Total
-                    </Badge>
-                </CardHeader>
-                <CardContent>
-                    <DataTable
-                        columns={columns}
-                        data={myAchievements}
-                        searchable
-                        searchKey="title"
-                        searchPlaceholder="Search achievements..."
-                        pageSize={5}
+                {/* Stat cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <StatCard
+                        title="Total Points"
+                        value={stats.totalPoints}
+                        icon={Trophy}
+                        description="Approved achievement points"
                     />
-                </CardContent>
-            </Card>
+                    <StatCard
+                        title="Approved"
+                        value={stats.approved}
+                        icon={CheckCircle}
+                        trend={achievements.length > 0 ? Math.round((stats.approved / achievements.length) * 100) : 0}
+                        description="of total submissions"
+                    />
+                    <StatCard
+                        title="Pending"
+                        value={stats.pending}
+                        icon={Clock}
+                        description="Awaiting review"
+                    />
+                    <StatCard
+                        title="Rejected"
+                        value={stats.rejected}
+                        icon={XCircle}
+                        description="Needs revision"
+                    />
+                </div>
+
+                {/* Pie + Recent table */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div className="lg:col-span-1 bg-white rounded-xl border border-slate-200 p-5">
+                        <h3 className="text-sm font-semibold text-slate-900 mb-4">By Category</h3>
+                        {pieData.length > 0 ? (
+                            <CustomPieChart data={pieData} height={260} />
+                        ) : (
+                            <p className="text-sm text-slate-400 text-center py-10">No achievements yet.</p>
+                        )}
+                    </div>
+                    <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-5">
+                        <h3 className="text-sm font-semibold text-slate-900 mb-4">Recent Achievements</h3>
+                        <DataTable columns={achievementColumns} data={achievements.slice(0, 10)} />
+                    </div>
+                </div>
+            </div>
         </DashboardLayout>
     );
 }

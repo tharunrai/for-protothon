@@ -15,6 +15,10 @@ import {
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { AchievementCategory } from "@/types";
+import { db } from "@/lib/firebase";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
+
 const categories: AchievementCategory[] = [
     "Academic",
     "Research",
@@ -49,16 +53,29 @@ const initialForm: FormData = {
     proofFile: null,
 };
 
-export function AchievementForm() {
+interface AchievementFormProps {
+    studentId: string;         // Firebase Auth UID
+    studentName?: string;      // from Firestore users doc
+    department?: string;       // from Firestore users doc
+}
+
+export function AchievementForm({ studentId, studentName = "", department = "" }: AchievementFormProps) {
     const [form, setForm] = useState<FormData>(initialForm);
     const [errors, setErrors] = useState<FormErrors>({});
     const [submitted, setSubmitted] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [firebaseError, setFirebaseError] = useState("");
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0] ?? null;
+        // Max 5MB check
+        if (file && file.size > 5 * 1024 * 1024) {
+            setFirebaseError("File size must be under 5 MB.");
+            return;
+        }
         setForm((f) => ({ ...f, proofFile: file, proof: file?.name ?? "" }));
+        setFirebaseError("");
     };
 
     const removeFile = () => {
@@ -87,18 +104,93 @@ export function AchievementForm() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!validate()) return;
+
         setLoading(true);
-        await new Promise((r) => setTimeout(r, 1200));
+        setFirebaseError("");
+
+        try {
+            let proofURL = "";
+
+            // Step 1 — Upload file to Firebase Storage if attached
+            if (form.proofFile) {
+                const storage = getStorage();
+                const fileRef = ref(
+                    storage,
+                    `proofs/${studentId}/${Date.now()}_${form.proofFile.name}`
+                );
+                await uploadBytes(fileRef, form.proofFile);
+                proofURL = await getDownloadURL(fileRef);
+            }
+
+            // Step 2 — Save achievement to Firestore
+            await addDoc(collection(db, "achievements"), {
+                // Student info
+                student_id: studentId,
+                student_name: studentName,
+                department: department,
+
+                // Achievement details
+                title: form.title.trim(),
+                category: form.category,
+                date: form.date,
+                description: form.description.trim(),
+                proof_url: proofURL,
+                proof_name: form.proof || "",
+
+                // Default values
+                status: "pending",
+                points: 0,
+                admin_remark: "",
+                reviewed_by: null,
+                reviewed_at: null,
+
+                // Timestamps
+                submitted_at: serverTimestamp(),
+                created_at: serverTimestamp(),
+            });
+
+            setSubmitted(true);
+
+        } catch (err: any) {
+            console.error("Firebase error:", err);
+            if (err.code === "storage/unauthorized") {
+                setFirebaseError("File upload failed — Storage not enabled. Achievement saved without proof.");
+                // Save without proof if storage fails
+                await addDoc(collection(db, "achievements"), {
+                    student_id: studentId,
+                    student_name: studentName,
+                    department: department,
+                    title: form.title.trim(),
+                    category: form.category,
+                    date: form.date,
+                    description: form.description.trim(),
+                    proof_url: "",
+                    proof_name: form.proof || "",
+                    status: "pending",
+                    points: 0,
+                    admin_remark: "",
+                    reviewed_by: null,
+                    reviewed_at: null,
+                    submitted_at: serverTimestamp(),
+                    created_at: serverTimestamp(),
+                });
+                setSubmitted(true);
+            } else {
+                setFirebaseError("Something went wrong. Please try again.");
+            }
+        }
+
         setLoading(false);
-        setSubmitted(true);
     };
 
     const handleReset = () => {
         setForm(initialForm);
         setErrors({});
         setSubmitted(false);
+        setFirebaseError("");
     };
 
+    // ── Success Screen ─────────────────────────────────────────────────────────
     if (submitted) {
         return (
             <Card className="border-emerald-200 bg-emerald-50/50">
@@ -120,16 +212,25 @@ export function AchievementForm() {
         );
     }
 
+    // ── Form ───────────────────────────────────────────────────────────────────
     return (
         <Card className="border-slate-200">
             <CardHeader>
                 <CardTitle className="text-base font-semibold">Submit New Achievement</CardTitle>
                 <CardDescription className="text-xs text-slate-500">
-                    Fill in the details below. Your submission will be reviewed by faculty.
+                    Fill in the details below. Your submission will be reviewed by admin.
                 </CardDescription>
             </CardHeader>
             <CardContent>
                 <form onSubmit={handleSubmit} className="space-y-5">
+
+                    {/* Firebase Error */}
+                    {firebaseError && (
+                        <div className="bg-red-50 border border-red-200 text-red-600 text-xs rounded-lg px-3 py-2.5">
+                            ⚠️ {firebaseError}
+                        </div>
+                    )}
+
                     {/* Title */}
                     <div className="space-y-1.5">
                         <Label htmlFor="title" className="text-xs font-medium text-slate-700">
@@ -212,7 +313,9 @@ export function AchievementForm() {
 
                     {/* Proof Upload */}
                     <div className="space-y-1.5">
-                        <Label className="text-xs font-medium text-slate-700">Supporting Document</Label>
+                        <Label className="text-xs font-medium text-slate-700">
+                            Supporting Document <span className="text-slate-400 font-normal">(optional)</span>
+                        </Label>
                         <input
                             ref={fileInputRef}
                             type="file"
@@ -223,8 +326,12 @@ export function AchievementForm() {
                         {form.proofFile ? (
                             <div className="flex items-center gap-3 border border-emerald-300 bg-emerald-50 rounded-lg px-4 py-3">
                                 <Paperclip className="h-4 w-4 text-emerald-600 shrink-0" />
-                                <span className="text-xs text-emerald-800 font-medium flex-1 truncate">{form.proofFile.name}</span>
-                                <span className="text-[10px] text-slate-400">{(form.proofFile.size / 1024).toFixed(0)} KB</span>
+                                <span className="text-xs text-emerald-800 font-medium flex-1 truncate">
+                                    {form.proofFile.name}
+                                </span>
+                                <span className="text-[10px] text-slate-400">
+                                    {(form.proofFile.size / 1024).toFixed(0)} KB
+                                </span>
                                 <button type="button" onClick={removeFile} className="text-slate-400 hover:text-red-500">
                                     <X className="h-4 w-4" />
                                 </button>
@@ -232,7 +339,7 @@ export function AchievementForm() {
                         ) : (
                             <div
                                 onClick={() => fileInputRef.current?.click()}
-                            className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center hover:border-[#20376b]/40 transition-colors cursor-pointer"
+                                className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center hover:border-[#20376b]/40 transition-colors cursor-pointer"
                             >
                                 <Upload className="h-8 w-8 text-slate-300 mx-auto mb-2" />
                                 <p className="text-sm text-slate-500">Click to upload or drag and drop</p>

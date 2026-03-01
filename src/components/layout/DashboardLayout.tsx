@@ -12,7 +12,7 @@ interface DashboardLayoutProps {
 export function DashboardLayout({ user, role, children, pendingCount }: DashboardLayoutProps) {
     return (
         <div className="min-h-screen bg-slate-50 flex flex-col">
-            <Navbar user={user} pendingCount={pendingCount} />
+            <Navbar pendingCount={pendingCount} />
             <div className="flex flex-1">
                 <Sidebar role={role} />
                 <main className="flex-1 p-6 lg:p-8 max-w-full overflow-x-hidden">

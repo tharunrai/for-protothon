@@ -9,6 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { createUserWithEmailAndPassword } from "firebase/auth";
+import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { auth, db } from "@/lib/firebase";
 
 type Role = "student";
 
@@ -19,6 +22,7 @@ export default function RegisterPage() {
     const [submitted, setSubmitted] = useState(false);
     const [form, setForm] = useState({ name: "", email: "", id: "", department: "", password: "", confirm: "" });
     const [errors, setErrors] = useState<Record<string, string>>({});
+    const [firebaseError, setFirebaseError] = useState("");
 
     const departments = ["Computer Science & Engineering", "Electronics & Communication", "Mechanical Engineering", "Civil Engineering", "Electrical Engineering"];
 
@@ -38,9 +42,34 @@ export default function RegisterPage() {
         e.preventDefault();
         if (!validate()) return;
         setLoading(true);
-        await new Promise((r) => setTimeout(r, 1200));
-        setLoading(false);
-        setSubmitted(true);
+        setFirebaseError("");
+
+        try {
+            const userCredential = await createUserWithEmailAndPassword(auth, form.email, form.password);
+            const uid = userCredential.user.uid;
+
+            await setDoc(doc(db, "users", uid), {
+                full_name: form.name.trim(),
+                email: form.email.trim(),
+                role: "student",
+                department: form.department,
+                roll_number: form.id.trim(),
+                created_at: serverTimestamp(),
+            });
+
+            setLoading(false);
+            setSubmitted(true);
+        } catch (err: unknown) {
+            setLoading(false);
+            const message = err instanceof Error ? err.message : "Registration failed.";
+            if (message.includes("email-already-in-use")) {
+                setFirebaseError("This email is already registered. Please login instead.");
+            } else if (message.includes("weak-password")) {
+                setFirebaseError("Password is too weak. Use at least 6 characters.");
+            } else {
+                setFirebaseError(message);
+            }
+        }
     };
 
     if (submitted) {
@@ -154,6 +183,10 @@ export default function RegisterPage() {
                                 <Input type="password" placeholder="Re-enter password" value={form.confirm} onChange={(e) => setForm({ ...form, confirm: e.target.value })} className={cn("h-9 text-sm", errors.confirm && "border-red-400")} />
                                 {errors.confirm && <p className="text-xs text-red-500">{errors.confirm}</p>}
                             </div>
+
+                            {firebaseError && (
+                                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-2">{firebaseError}</p>
+                            )}
 
                             <Button type="submit" disabled={loading} className="w-full bg-[#20376b] hover:bg-[#1a2d54] text-white h-9">
                                 {loading ? (

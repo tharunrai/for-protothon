@@ -1,196 +1,233 @@
 "use client";
 
+import { useMemo, useState } from "react";
+import {
+    useStudentAuth,
+    useStudentAchievements,
+    useAllAchievements,
+    computeCategoryStats,
+    computeMonthlyStats,
+    computeDepartmentStats,
+    profileToUser,
+} from "@/lib/hooks";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import {
-    ChartWrapper,
     CustomBarChart,
     CustomPieChart,
     CustomAreaChart,
 } from "@/components/shared/ChartComponents";
-import { StatCard } from "@/components/shared/StatCard";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { DataTable, Column } from "@/components/shared/DataTable";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { BarChart2, TrendingUp, Trophy, Users } from "lucide-react";
-import {
-    currentStudent,
-    categoryStats,
-    monthlyStats,
-    departmentStats,
-} from "@/lib/dummy-data";
+import { Badge } from "@/components/ui/badge";
+import { CategoryStats, DepartmentStats } from "@/types";
 
-const categoryBarData = categoryStats.map((c) => ({
-    name: c.category.split(" ")[0],
-    Approved: c.approved,
-    Pending: c.pending,
-    Rejected: c.rejected,
-}));
+const categoryColors: Record<string, string> = {
+    Academic: "#3b82f6",
+    Research: "#8b5cf6",
+    Sports: "#10b981",
+    Cultural: "#f59e0b",
+    "Co-Curricular": "#ef4444",
+    Professional: "#6366f1",
+};
 
-const monthlyAreaData = monthlyStats.map((m) => ({
-    name: m.month,
-    total: m.total,
-    approved: m.approved,
-    pending: m.pending,
-}));
+export default function StudentAnalyticsPage() {
+    const { student, loading: authLoading } = useStudentAuth();
+    const { achievements: myAchievements, loading: myLoading } = useStudentAchievements(student?.uid);
+    const { achievements: allAchievements, loading: allLoading } = useAllAchievements();
+    const [tab, setTab] = useState("overview");
 
-const deptBarData = departmentStats.map((d) => ({
-    name: d.department,
-    Points: d.totalPoints,
-    Students: d.totalStudents,
-}));
+    const loading = authLoading || myLoading || allLoading;
 
-const statusPieData = [
-    { name: "Approved", value: categoryStats.reduce((s, c) => s + c.approved, 0) },
-    { name: "Pending", value: categoryStats.reduce((s, c) => s + c.pending, 0) },
-    { name: "Rejected", value: categoryStats.reduce((s, c) => s + c.rejected, 0) },
-];
+    // Student-specific stats
+    const myCatStats = useMemo(() => computeCategoryStats(myAchievements), [myAchievements]);
+    const myMonthlyStats = useMemo(() => computeMonthlyStats(myAchievements), [myAchievements]);
 
-const categoryPieData = categoryStats.map((c) => ({
-    name: c.category,
-    value: c.count,
-}));
+    // Department comparison (from all achievements)
+    const deptStats = useMemo(() => computeDepartmentStats(allAchievements), [allAchievements]);
 
-export default function AnalyticsPage() {
-    const totalPoints = categoryStats.reduce((s, c) => s + c.points, 0);
-    const totalApproved = categoryStats.reduce((s, c) => s + c.approved, 0);
-    const totalPending = categoryStats.reduce((s, c) => s + c.pending, 0);
+    // Pie data for categories
+    const pieData = useMemo(
+        () =>
+            myCatStats
+                .filter((c) => c.count > 0)
+                .map((c) => ({
+                    name: c.category,
+                    value: c.count,
+                    color: categoryColors[c.category] || "#94a3b8",
+                })),
+        [myCatStats]
+    );
+
+    // Bar data for category points
+    const catBarData = useMemo(
+        () =>
+            myCatStats.map((c) => ({
+                name: c.category,
+                Points: c.points,
+                Count: c.count,
+            })),
+        [myCatStats]
+    );
+
+    // Area data for monthly trend
+    const areaData = useMemo(
+        () =>
+            myMonthlyStats.map((m) => ({
+                name: m.month,
+                Total: m.total,
+                Approved: m.approved,
+                Pending: m.pending,
+            })),
+        [myMonthlyStats]
+    );
+
+    // Department bar data
+    const deptBarData = useMemo(
+        () =>
+            deptStats.map((d) => ({
+                name: d.department.length > 12 ? d.department.slice(0, 12) + "…" : d.department,
+                Points: d.totalPoints,
+                Achievements: d.totalAchievements,
+            })),
+        [deptStats]
+    );
+
+    // Summary numbers
+    const summary = useMemo(() => {
+        const approved = myAchievements.filter((a) => a.status === "approved");
+        return {
+            total: myAchievements.length,
+            approved: approved.length,
+            points: approved.reduce((s, a) => s + a.points, 0),
+            categories: new Set(myAchievements.map((a) => a.category)).size,
+        };
+    }, [myAchievements]);
+
+    const catColumns: Column<CategoryStats>[] = [
+        { key: "category", label: "Category" },
+        { key: "count", label: "Total" },
+        {
+            key: "approved",
+            label: "Approved",
+            render: (v) => <Badge className="bg-emerald-100 text-emerald-700 text-[10px]">{String(v)}</Badge>,
+        },
+        {
+            key: "pending",
+            label: "Pending",
+            render: (v) => <Badge className="bg-amber-100 text-amber-700 text-[10px]">{String(v)}</Badge>,
+        },
+        { key: "points", label: "Points" },
+    ];
+
+    const deptColumns: Column<DepartmentStats>[] = [
+        { key: "department", label: "Department" },
+        { key: "totalStudents", label: "Students" },
+        { key: "totalAchievements", label: "Achievements" },
+        { key: "approvedAchievements", label: "Approved" },
+        { key: "totalPoints", label: "Points" },
+    ];
+
+    if (loading || !student) {
+        return (
+            <div className="flex min-h-screen items-center justify-center">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#20376b] border-t-transparent" />
+            </div>
+        );
+    }
 
     return (
-        <DashboardLayout user={currentStudent} role="student">
-            {/* Header */}
-            <div className="mb-6">
-                <h1 className="text-xl font-bold text-slate-900">Analytics</h1>
-                <p className="text-sm text-slate-500 mt-0.5">Visual insights across achievements, categories, and departments.</p>
-            </div>
+        <DashboardLayout user={profileToUser(student)} role="student">
+            <div className="space-y-6">
+                <div>
+                    <h1 className="text-2xl font-bold text-slate-900">My Analytics</h1>
+                    <p className="text-sm text-slate-500 mt-1">
+                        Detailed insights into your achievements and performance.
+                    </p>
+                </div>
 
-            {/* Summary Stats */}
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-6">
-                <StatCard title="Total Points Awarded" value={totalPoints.toLocaleString()} icon={Trophy} color="navy" />
-                <StatCard title="Approved Achievements" value={totalApproved} icon={TrendingUp} color="emerald" trend={14} trendLabel="vs last year" />
-                <StatCard title="Pending Review" value={totalPending} icon={BarChart2} color="amber" />
-                <StatCard title="Active Students" value="1,200" icon={Users} color="teal" />
-            </div>
+                {/* Quick summary chips */}
+                <div className="flex flex-wrap gap-3">
+                    {[
+                        { label: "Total Submissions", value: summary.total },
+                        { label: "Approved", value: summary.approved },
+                        { label: "Total Points", value: summary.points },
+                        { label: "Categories", value: summary.categories },
+                    ].map((s) => (
+                        <div key={s.label} className="bg-white border border-slate-200 rounded-lg px-4 py-2">
+                            <p className="text-[10px] text-slate-400 uppercase tracking-wide">{s.label}</p>
+                            <p className="text-lg font-bold text-slate-900">{s.value}</p>
+                        </div>
+                    ))}
+                </div>
 
-            <Tabs defaultValue="overview">
-                <TabsList className="mb-6 bg-slate-100">
-                    <TabsTrigger value="overview" className="text-xs">Overview</TabsTrigger>
-                    <TabsTrigger value="categories" className="text-xs">By Category</TabsTrigger>
-                    <TabsTrigger value="departments" className="text-xs">By Department</TabsTrigger>
-                </TabsList>
+                <Tabs value={tab} onValueChange={setTab} className="space-y-4">
+                    <TabsList>
+                        <TabsTrigger value="overview">Overview</TabsTrigger>
+                        <TabsTrigger value="categories">Categories</TabsTrigger>
+                        <TabsTrigger value="departments">Department Comparison</TabsTrigger>
+                    </TabsList>
 
-                <TabsContent value="overview" className="space-y-5">
-                    <div className="grid gap-5 lg:grid-cols-2">
-                        <ChartWrapper title="Yearly Achievement Trend" description="Monthly submission and approval trends across the academic year">
-                            <CustomAreaChart
-                                data={monthlyAreaData}
-                                areas={[
-                                    { key: "total", label: "Total Submissions", color: "#20376b" },
-                                    { key: "approved", label: "Approved", color: "#10b981" },
-                                    { key: "pending", label: "Pending", color: "#d97706" },
-                                ]}
-                            />
-                        </ChartWrapper>
-                        <ChartWrapper title="Status Distribution" description="Overall approval vs pending vs rejected">
-                            <CustomPieChart data={statusPieData} height={280} innerRadius={65} />
-                        </ChartWrapper>
-                    </div>
-                </TabsContent>
-
-                <TabsContent value="categories" className="space-y-5">
-                    <div className="grid gap-5 lg:grid-cols-2">
-                        <ChartWrapper title="Category-wise Breakdown" description="Approved, pending, and rejected by category">
-                            <CustomBarChart
-                                data={categoryBarData}
-                                bars={[
-                                    { key: "Approved", label: "Approved", color: "#10b981" },
-                                    { key: "Pending", label: "Pending", color: "#f59e0b" },
-                                    { key: "Rejected", label: "Rejected", color: "#ef4444" },
-                                ]}
-                            />
-                        </ChartWrapper>
-                        <ChartWrapper title="Category Share" description="Proportion of total achievements per category">
-                            <CustomPieChart data={categoryPieData} height={280} innerRadius={55} />
-                        </ChartWrapper>
-                    </div>
-
-                    {/* Category table */}
-                    <Card className="border-slate-200 shadow-sm">
-                        <CardHeader className="pb-3">
-                            <CardTitle className="text-sm font-semibold text-slate-800">Category Summary</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="rounded-lg border border-slate-200 overflow-hidden">
-                                <table className="w-full text-xs">
-                                    <thead>
-                                        <tr className="bg-slate-50 border-b border-slate-200">
-                                            {["Category", "Total", "Approved", "Pending", "Rejected", "Points"].map((h) => (
-                                                <th key={h} className="px-4 py-2.5 text-left font-semibold text-slate-500 uppercase tracking-wider text-[10px]">{h}</th>
-                                            ))}
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100">
-                                        {categoryStats.map((c) => (
-                                            <tr key={c.category} className="hover:bg-slate-50">
-                                                <td className="px-4 py-2.5 font-medium text-slate-800">{c.category}</td>
-                                                <td className="px-4 py-2.5 text-slate-600">{c.count}</td>
-                                                <td className="px-4 py-2.5 text-emerald-700 font-semibold">{c.approved}</td>
-                                                <td className="px-4 py-2.5 text-amber-600">{c.pending}</td>
-                                                <td className="px-4 py-2.5 text-rose-600">{c.rejected}</td>
-                                                <td className="px-4 py-2.5 text-[#20376b] font-semibold">{c.points.toLocaleString()}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
+                    {/* ── Overview tab ─────────────────────────────────────── */}
+                    <TabsContent value="overview" className="space-y-6">
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <div className="bg-white rounded-xl border border-slate-200 p-5">
+                                <h3 className="text-sm font-semibold text-slate-900 mb-4">Monthly Trend</h3>
+                                {areaData.length > 0 ? (
+                                    <CustomAreaChart data={areaData} xKey="name" areas={[
+                                        { key: "Total", label: "Total", color: "#3b82f6" },
+                                        { key: "Approved", label: "Approved", color: "#10b981" },
+                                        { key: "Pending", label: "Pending", color: "#f59e0b" },
+                                    ]} height={280} />
+                                ) : (
+                                    <p className="text-sm text-slate-400 text-center py-16">No data yet</p>
+                                )}
                             </div>
-                        </CardContent>
-                    </Card>
-                </TabsContent>
-
-                <TabsContent value="departments" className="space-y-5">
-                    <ChartWrapper title="Department Performance" description="Achievement points and student count by department">
-                        <CustomBarChart
-                            data={deptBarData}
-                            bars={[
-                                { key: "Points", label: "Points", color: "#20376b" },
-                                { key: "Students", label: "Students", color: "#0d9488" },
-                            ]}
-                            height={300}
-                        />
-                    </ChartWrapper>
-
-                    <Card className="border-slate-200 shadow-sm">
-                        <CardHeader className="pb-3">
-                            <CardTitle className="text-sm font-semibold text-slate-800">Department Summary Table</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="rounded-lg border border-slate-200 overflow-hidden">
-                                <table className="w-full text-xs">
-                                    <thead>
-                                        <tr className="bg-slate-50 border-b border-slate-200">
-                                            {["Department", "Students", "Total", "Approved", "Approval Rate", "Points"].map((h) => (
-                                                <th key={h} className="px-4 py-2.5 text-left font-semibold text-slate-500 uppercase tracking-wider text-[10px]">{h}</th>
-                                            ))}
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100">
-                                        {departmentStats.map((d) => (
-                                            <tr key={d.department} className="hover:bg-slate-50">
-                                                <td className="px-4 py-2.5 font-medium text-slate-800">{d.department}</td>
-                                                <td className="px-4 py-2.5 text-slate-600">{d.totalStudents}</td>
-                                                <td className="px-4 py-2.5 text-slate-600">{d.totalAchievements}</td>
-                                                <td className="px-4 py-2.5 text-emerald-700 font-semibold">{d.approvedAchievements}</td>
-                                                <td className="px-4 py-2.5 text-[#20376b]">
-                                                    {d.totalAchievements > 0 ? Math.round((d.approvedAchievements / d.totalAchievements) * 100) : 0}%
-                                                </td>
-                                                <td className="px-4 py-2.5 text-[#20376b] font-semibold">{d.totalPoints.toLocaleString()}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
+                            <div className="bg-white rounded-xl border border-slate-200 p-5">
+                                <h3 className="text-sm font-semibold text-slate-900 mb-4">Category Distribution</h3>
+                                {pieData.length > 0 ? (
+                                    <CustomPieChart data={pieData} height={280} />
+                                ) : (
+                                    <p className="text-sm text-slate-400 text-center py-16">No data yet</p>
+                                )}
                             </div>
-                        </CardContent>
-                    </Card>
-                </TabsContent>
-            </Tabs>
+                        </div>
+                    </TabsContent>
+
+                    {/* ── Categories tab ───────────────────────────────────── */}
+                    <TabsContent value="categories" className="space-y-6">
+                        <div className="bg-white rounded-xl border border-slate-200 p-5">
+                            <h3 className="text-sm font-semibold text-slate-900 mb-4">Points by Category</h3>
+                            <CustomBarChart data={catBarData} xKey="name" bars={[
+                                { key: "Points", label: "Points", color: "#3b82f6" },
+                                { key: "Count", label: "Count", color: "#94a3b8" },
+                            ]} height={300} />
+                        </div>
+                        <div className="bg-white rounded-xl border border-slate-200 p-5">
+                            <h3 className="text-sm font-semibold text-slate-900 mb-4">Category Breakdown</h3>
+                            <DataTable columns={catColumns} data={myCatStats} />
+                        </div>
+                    </TabsContent>
+
+                    {/* ── Department Comparison tab ────────────────────────── */}
+                    <TabsContent value="departments" className="space-y-6">
+                        <div className="bg-white rounded-xl border border-slate-200 p-5">
+                            <h3 className="text-sm font-semibold text-slate-900 mb-4">Department Performance</h3>
+                            {deptBarData.length > 0 ? (
+                                <CustomBarChart data={deptBarData} xKey="name" bars={[
+                                    { key: "Points", label: "Points", color: "#6366f1" },
+                                    { key: "Achievements", label: "Achievements", color: "#94a3b8" },
+                                ]} height={300} />
+                            ) : (
+                                <p className="text-sm text-slate-400 text-center py-16">No data yet</p>
+                            )}
+                        </div>
+                        <div className="bg-white rounded-xl border border-slate-200 p-5">
+                            <h3 className="text-sm font-semibold text-slate-900 mb-4">All Departments</h3>
+                            <DataTable columns={deptColumns} data={deptStats} />
+                        </div>
+                    </TabsContent>
+                </Tabs>
+            </div>
         </DashboardLayout>
     );
 }

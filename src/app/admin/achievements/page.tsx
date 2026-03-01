@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Check, X, Eye, Filter } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { CategoryBadge, Column } from "@/components/shared/DataTable";
+import { CategoryBadge } from "@/components/shared/DataTable";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -24,9 +24,16 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { currentAdmin, achievements as initialAchievements } from "@/lib/dummy-data";
+import { Label } from "@/components/ui/label";
 import { Achievement, AchievementStatus } from "@/types";
 import { cn } from "@/lib/utils";
+import { db } from "@/lib/firebase";
+import { doc, updateDoc } from "firebase/firestore";
+import {
+    useAdminAuth,
+    useAllAchievements,
+    profileToUser,
+} from "@/lib/hooks";
 
 const statusColors: Record<AchievementStatus, string> = {
     approved: "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -35,30 +42,48 @@ const statusColors: Record<AchievementStatus, string> = {
 };
 
 export default function AdminAchievementsPage() {
-    const [items, setItems] = useState<Achievement[]>(initialAchievements);
+    const { admin, loading: loadingAuth } = useAdminAuth();
+    const { achievements, loading: loadingData } = useAllAchievements();
+
     const [search, setSearch] = useState("");
     const [filterCategory, setFilterCategory] = useState("All");
-    const [selected, setSelected] = useState<Achievement | null>(null);
+    const [selected, setSelected] = useState<(Achievement & { adminRemark: string }) | null>(null);
+    const [pointsInput, setPointsInput] = useState("");
+    const [remarkInput, setRemarkInput] = useState("");
+    const [actionLoading, setActionLoading] = useState(false);
 
-    const approve = (id: string) =>
-        setItems((prev) =>
-            prev.map((a) =>
-                a.id === id
-                    ? { ...a, status: "approved", reviewedBy: currentAdmin.name, reviewedAt: new Date().toISOString().slice(0, 10) }
-                    : a
-            )
-        );
+    const approve = async (id: string, points: number) => {
+        setActionLoading(true);
+        try {
+            await updateDoc(doc(db, "achievements", id), {
+                status: "approved",
+                points: points,
+                reviewed_by: admin?.name || "Admin",
+                reviewed_at: new Date().toISOString().slice(0, 10),
+                admin_remark: "",
+            });
+        } catch (e) { console.error(e); }
+        setActionLoading(false);
+        setSelected(null);
+        setPointsInput("");
+    };
 
-    const reject = (id: string) =>
-        setItems((prev) =>
-            prev.map((a) =>
-                a.id === id
-                    ? { ...a, status: "rejected", reviewedBy: currentAdmin.name, reviewedAt: new Date().toISOString().slice(0, 10) }
-                    : a
-            )
-        );
+    const reject = async (id: string, remark: string) => {
+        setActionLoading(true);
+        try {
+            await updateDoc(doc(db, "achievements", id), {
+                status: "rejected",
+                reviewed_by: admin?.name || "Admin",
+                reviewed_at: new Date().toISOString().slice(0, 10),
+                admin_remark: remark,
+            });
+        } catch (e) { console.error(e); }
+        setActionLoading(false);
+        setSelected(null);
+        setRemarkInput("");
+    };
 
-    const filtered = items.filter((a) => {
+    const filtered = achievements.filter((a) => {
         const matchSearch = a.studentName.toLowerCase().includes(search.toLowerCase()) ||
             a.title.toLowerCase().includes(search.toLowerCase());
         const matchCat = filterCategory === "All" || a.category === filterCategory;
@@ -69,7 +94,7 @@ export default function AdminAchievementsPage() {
     const approved = filtered.filter((a) => a.status === "approved");
     const rejected = filtered.filter((a) => a.status === "rejected");
 
-    const AchievementRow = ({ a }: { a: Achievement }) => (
+    const AchievementRow = ({ a }: { a: Achievement & { adminRemark: string } }) => (
         <div className="flex items-center gap-3 py-3 px-4 hover:bg-slate-50 rounded-lg transition-colors">
             <Avatar className="h-8 w-8 shrink-0">
                 <AvatarFallback className="bg-[#20376b]/10 text-[#20376b] text-[10px] font-semibold">
@@ -83,7 +108,7 @@ export default function AdminAchievementsPage() {
                 </p>
             </div>
             <CategoryBadge category={a.category} />
-            <span className="text-xs font-semibold text-[#20376b] shrink-0">{a.points} pts</span>
+            <span className="text-xs font-semibold text-[#20376b] shrink-0">{a.points > 0 ? `${a.points} pts` : "—"}</span>
             <Badge variant="outline" className={cn("text-[10px] capitalize shrink-0", statusColors[a.status])}>
                 {a.status}
             </Badge>
@@ -92,7 +117,7 @@ export default function AdminAchievementsPage() {
                     size="icon"
                     variant="ghost"
                     className="h-7 w-7 text-slate-400 hover:text-slate-700"
-                    onClick={() => setSelected(a)}
+                    onClick={() => { setSelected(a); setPointsInput(String(a.points || "")); setRemarkInput(a.adminRemark || ""); }}
                 >
                     <Eye className="h-3.5 w-3.5" />
                 </Button>
@@ -100,7 +125,8 @@ export default function AdminAchievementsPage() {
                     <Button
                         size="icon"
                         className="h-7 w-7 bg-emerald-500 hover:bg-emerald-600 text-white"
-                        onClick={() => approve(a.id)}
+                        onClick={() => { setSelected(a); setPointsInput(String(a.points || "")); setRemarkInput(""); }}
+                        title="Approve"
                     >
                         <Check className="h-3.5 w-3.5" />
                     </Button>
@@ -110,7 +136,8 @@ export default function AdminAchievementsPage() {
                         size="icon"
                         variant="outline"
                         className="h-7 w-7 border-red-200 text-red-500 hover:bg-red-50"
-                        onClick={() => reject(a.id)}
+                        onClick={() => { setSelected(a); setRemarkInput(a.adminRemark || ""); setPointsInput(""); }}
+                        title="Reject"
                     >
                         <X className="h-3.5 w-3.5" />
                     </Button>
@@ -119,8 +146,21 @@ export default function AdminAchievementsPage() {
         </div>
     );
 
+    if (loadingAuth) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-slate-50">
+                <div className="flex flex-col items-center gap-3">
+                    <div className="h-8 w-8 rounded-full border-2 border-[#20376b] border-t-transparent animate-spin" />
+                    <p className="text-sm text-slate-500">Loading...</p>
+                </div>
+            </div>
+        );
+    }
+
+    if (!admin) return null;
+
     return (
-        <DashboardLayout user={currentAdmin} role="admin" pendingCount={items.filter((a) => a.status === "pending").length}>
+        <DashboardLayout user={profileToUser(admin)} role="admin" pendingCount={achievements.filter((a) => a.status === "pending").length}>
             {/* Header */}
             <div className="mb-6">
                 <h1 className="text-xl font-bold text-slate-900">Achievements</h1>
@@ -133,15 +173,15 @@ export default function AdminAchievementsPage() {
             <div className="flex flex-wrap gap-3 mb-5">
                 <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2">
                     <span className="text-xs font-medium text-amber-700">Pending</span>
-                    <span className="text-sm font-bold text-amber-700">{items.filter((a) => a.status === "pending").length}</span>
+                    <span className="text-sm font-bold text-amber-700">{achievements.filter((a) => a.status === "pending").length}</span>
                 </div>
                 <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2">
                     <span className="text-xs font-medium text-emerald-700">Approved</span>
-                    <span className="text-sm font-bold text-emerald-700">{items.filter((a) => a.status === "approved").length}</span>
+                    <span className="text-sm font-bold text-emerald-700">{achievements.filter((a) => a.status === "approved").length}</span>
                 </div>
                 <div className="flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2">
                     <span className="text-xs font-medium text-rose-700">Rejected</span>
-                    <span className="text-sm font-bold text-rose-700">{items.filter((a) => a.status === "rejected").length}</span>
+                    <span className="text-sm font-bold text-rose-700">{achievements.filter((a) => a.status === "rejected").length}</span>
                 </div>
             </div>
 
@@ -194,7 +234,11 @@ export default function AdminAchievementsPage() {
                                 <CardTitle className="text-sm font-semibold text-slate-800 capitalize">{value === "all" ? "All Submissions" : value}</CardTitle>
                             </CardHeader>
                             <CardContent className="px-2">
-                                {data.length === 0 ? (
+                                {loadingData ? (
+                                    <div className="space-y-3 px-2">
+                                        {[1, 2, 3].map((i) => <div key={i} className="h-12 bg-slate-100 rounded animate-pulse" />)}
+                                    </div>
+                                ) : data.length === 0 ? (
                                     <p className="text-xs text-slate-400 text-center py-8">{emptyMsg}</p>
                                 ) : (
                                     <div className="divide-y divide-slate-100">
@@ -207,7 +251,7 @@ export default function AdminAchievementsPage() {
                 ))}
             </Tabs>
 
-            {/* Detail Dialog */}
+            {/* Detail / Action Dialog */}
             {selected && (
                 <Dialog open={!!selected} onOpenChange={() => setSelected(null)}>
                     <DialogContent className="max-w-md">
@@ -224,8 +268,8 @@ export default function AdminAchievementsPage() {
                                     <p className="font-medium text-slate-800">{selected.category}</p>
                                 </div>
                                 <div className="bg-slate-50 rounded-md p-3">
-                                    <p className="text-slate-400 mb-0.5">Points</p>
-                                    <p className="font-semibold text-[#20376b]">{selected.points} pts</p>
+                                    <p className="text-slate-400 mb-0.5">Current Points</p>
+                                    <p className="font-semibold text-[#20376b]">{selected.points > 0 ? `${selected.points} pts` : "—"}</p>
                                 </div>
                                 <div className="bg-slate-50 rounded-md p-3">
                                     <p className="text-slate-400 mb-0.5">Department</p>
@@ -248,29 +292,63 @@ export default function AdminAchievementsPage() {
                                     <p className="text-[#20376b] font-medium">{selected.proof}</p>
                                 </div>
                             )}
-                            {selected.reviewedBy && (
-                                <div className="bg-slate-50 rounded-md p-3 text-xs">
-                                    <p className="text-slate-400 mb-1">Reviewed By</p>
-                                    <p className="text-slate-700">{selected.reviewedBy} · {selected.reviewedAt}</p>
+                            {selected.adminRemark && (
+                                <div className="bg-rose-50 rounded-md p-3 text-xs">
+                                    <p className="text-rose-400 mb-1">Previous Remark</p>
+                                    <p className="text-rose-700">{selected.adminRemark}</p>
+                                </div>
+                            )}
+
+                            {/* Approve — points input */}
+                            {selected.status !== "approved" && (
+                                <div className="space-y-1.5">
+                                    <Label className="text-xs font-medium text-slate-700">Assign Points (required to approve)</Label>
+                                    <Input
+                                        type="number"
+                                        min={0}
+                                        max={200}
+                                        placeholder="e.g. 80"
+                                        value={pointsInput}
+                                        onChange={(e) => setPointsInput(e.target.value)}
+                                        className="h-9 text-sm"
+                                    />
+                                </div>
+                            )}
+
+                            {/* Reject — remark input */}
+                            {selected.status !== "rejected" && (
+                                <div className="space-y-1.5">
+                                    <Label className="text-xs font-medium text-slate-700">Rejection Remark (required to reject)</Label>
+                                    <Input
+                                        placeholder="e.g. Insufficient proof provided."
+                                        value={remarkInput}
+                                        onChange={(e) => setRemarkInput(e.target.value)}
+                                        className="h-9 text-sm"
+                                    />
                                 </div>
                             )}
                         </div>
+
                         <div className="flex gap-2 mt-2">
                             {selected.status !== "approved" && (
                                 <Button
                                     className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white gap-1.5"
-                                    onClick={() => { approve(selected.id); setSelected(null); }}
+                                    disabled={actionLoading || !pointsInput || isNaN(Number(pointsInput))}
+                                    onClick={() => approve(selected.id, Number(pointsInput))}
                                 >
-                                    <Check className="h-4 w-4" /> Approve
+                                    {actionLoading ? <span className="h-3.5 w-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" /> : <Check className="h-4 w-4" />}
+                                    Approve
                                 </Button>
                             )}
                             {selected.status !== "rejected" && (
                                 <Button
                                     variant="outline"
                                     className="flex-1 border-red-200 text-red-600 hover:bg-red-50 gap-1.5"
-                                    onClick={() => { reject(selected.id); setSelected(null); }}
+                                    disabled={actionLoading || !remarkInput.trim()}
+                                    onClick={() => reject(selected.id, remarkInput.trim())}
                                 >
-                                    <X className="h-4 w-4" /> Reject
+                                    {actionLoading ? <span className="h-3.5 w-3.5 rounded-full border-2 border-red-400 border-t-transparent animate-spin" /> : <X className="h-4 w-4" />}
+                                    Reject
                                 </Button>
                             )}
                         </div>
@@ -280,3 +358,4 @@ export default function AdminAchievementsPage() {
         </DashboardLayout>
     );
 }
+

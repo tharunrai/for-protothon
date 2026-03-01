@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Printer, GraduationCap, Trophy, TrendingUp, CheckCircle, BookOpen } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatCard } from "@/components/shared/StatCard";
@@ -19,52 +19,22 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import {
-    currentAdmin,
-    achievements,
-    categoryStats,
-    departmentStats,
-    monthlyStats,
-    topStudents,
-    pendingAchievements,
-} from "@/lib/dummy-data";
-import { Achievement } from "@/types";
+    useAdminAuth,
+    useAllAchievements,
+    computeCategoryStats,
+    computeMonthlyStats,
+    computeDepartmentStats,
+    computeTopStudents,
+    profileToUser,
+} from "@/lib/hooks";
+import { Achievement, CategoryStats, DepartmentStats, MonthlyStats, TopStudent } from "@/types";
 
-// ── Derived data ──────────────────────────────────────────────
-const totalAchievements = categoryStats.reduce((s, c) => s + c.count, 0);
-const totalApproved = categoryStats.reduce((s, c) => s + c.approved, 0);
-const totalPending = categoryStats.reduce((s, c) => s + c.pending, 0);
-const totalRejected = categoryStats.reduce((s, c) => s + c.rejected, 0);
-const totalPoints = categoryStats.reduce((s, c) => s + c.points, 0);
-const approvalRate = Math.round((totalApproved / totalAchievements) * 100);
-const totalStudents = 1200;
-const participationRate = Math.round((totalAchievements / totalStudents) * 100);
-
-// Pie chart data
-const pieData = categoryStats.map((c) => ({ name: c.category, value: c.count }));
-
-// Bar chart: approved vs pending per category
-const categoryBarData = categoryStats.map((c) => ({
-    name: c.category.length > 8 ? c.category.slice(0, 8) + "." : c.category,
-    Approved: c.approved,
-    Pending: c.pending,
-    Rejected: c.rejected,
-}));
-
-// Area chart: monthly trend
-const areaData = monthlyStats.map((m) => ({
-    name: m.month,
-    Total: m.total,
-    Approved: m.approved,
-    Pending: m.pending,
-}));
-
-// Achievement records table columns
+// ── Achievement records table columns (index passed at render time) ───────────
 const recordColumns: Column<Achievement>[] = [
     {
-        key: "id", label: "Sr.", render: (val) => {
-            const idx = achievements.findIndex((a) => a.id === String(val));
-            return <span className="text-[10px] text-slate-400 font-mono">{idx + 1}</span>;
-        },
+        key: "id", label: "Sr.", render: (_, _row, idx) => (
+            <span className="text-[10px] text-slate-400 font-mono">{(idx ?? 0) + 1}</span>
+        ),
     },
     {
         key: "studentName", label: "Student", sortable: true, render: (_, row) => (
@@ -105,7 +75,22 @@ const recordColumns: Column<Achievement>[] = [
 ];
 
 // ── Print / Export PDF ────────────────────────────────────────
-function handlePrintReport(academicYear: string) {
+function handlePrintReport(
+    academicYear: string,
+    achievements: Achievement[],
+    categoryStats: CategoryStats[],
+    departmentStats: DepartmentStats[],
+    monthlyStats: MonthlyStats[],
+    topStudents: TopStudent[],
+) {
+    const totalAchievements = categoryStats.reduce((s, c) => s + c.count, 0);
+    const totalApproved = categoryStats.reduce((s, c) => s + c.approved, 0);
+    const totalPending = categoryStats.reduce((s, c) => s + c.pending, 0);
+    const totalRejected = categoryStats.reduce((s, c) => s + c.rejected, 0);
+    const totalPoints = categoryStats.reduce((s, c) => s + c.points, 0);
+    const approvalRate = totalAchievements > 0 ? Math.round((totalApproved / totalAchievements) * 100) : 0;
+    const totalStudents = new Set(achievements.map((a) => a.studentId)).size;
+
     const dateStr = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" });
 
     // Category summary rows
@@ -241,9 +226,49 @@ function handlePrintReport(academicYear: string) {
 // ── Page Component ────────────────────────────────────────────
 export default function NBAReportPage() {
     const [academicYear, setAcademicYear] = useState("2024-25");
+    const { admin, loading: authLoading } = useAdminAuth();
+    const { achievements, loading: dataLoading } = useAllAchievements();
+
+    const categoryStats = useMemo(() => computeCategoryStats(achievements), [achievements]);
+    const monthlyStats = useMemo(() => computeMonthlyStats(achievements), [achievements]);
+    const departmentStats = useMemo(() => computeDepartmentStats(achievements), [achievements]);
+    const topStudents = useMemo(() => computeTopStudents(achievements), [achievements]);
+
+    const totalAchievements = useMemo(() => categoryStats.reduce((s, c) => s + c.count, 0), [categoryStats]);
+    const totalApproved = useMemo(() => categoryStats.reduce((s, c) => s + c.approved, 0), [categoryStats]);
+    const totalPending = useMemo(() => categoryStats.reduce((s, c) => s + c.pending, 0), [categoryStats]);
+    const totalRejected = useMemo(() => categoryStats.reduce((s, c) => s + c.rejected, 0), [categoryStats]);
+    const totalPoints = useMemo(() => categoryStats.reduce((s, c) => s + c.points, 0), [categoryStats]);
+    const approvalRate = totalAchievements > 0 ? Math.round((totalApproved / totalAchievements) * 100) : 0;
+    const uniqueStudents = useMemo(() => new Set(achievements.map((a) => a.studentId)).size, [achievements]);
+    const pendingCount = useMemo(() => achievements.filter((a) => a.status === "pending").length, [achievements]);
+
+    const pieData = useMemo(() => categoryStats.map((c) => ({ name: c.category, value: c.count })), [categoryStats]);
+    const categoryBarData = useMemo(() => categoryStats.map((c) => ({
+        name: c.category.length > 8 ? c.category.slice(0, 8) + "." : c.category,
+        Approved: c.approved,
+        Pending: c.pending,
+        Rejected: c.rejected,
+    })), [categoryStats]);
+    const areaData = useMemo(() => monthlyStats.map((m) => ({
+        name: m.month,
+        Total: m.total,
+        Approved: m.approved,
+        Pending: m.pending,
+    })), [monthlyStats]);
+
+    if (authLoading || dataLoading) {
+        return (
+            <div className="flex h-screen items-center justify-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#20376b]" />
+            </div>
+        );
+    }
+
+    if (!admin) return null;
 
     return (
-        <DashboardLayout user={currentAdmin} role="admin" pendingCount={pendingAchievements.length}>
+        <DashboardLayout user={profileToUser(admin)} role="admin" pendingCount={pendingCount}>
             {/* Page Header */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
                 <div>
@@ -267,7 +292,7 @@ export default function NBAReportPage() {
                         </SelectContent>
                     </Select>
                     <Button
-                        onClick={() => handlePrintReport(academicYear)}
+                        onClick={() => handlePrintReport(academicYear, achievements, categoryStats, departmentStats, monthlyStats, topStudents)}
                         className="bg-[#20376b] hover:bg-[#1a2d54] text-white h-9 text-sm gap-2"
                     >
                         <Printer className="h-4 w-4" />
@@ -278,7 +303,7 @@ export default function NBAReportPage() {
 
             {/* Executive Summary */}
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-6">
-                <StatCard title="Total Students" value={totalStudents.toLocaleString()} icon={GraduationCap} color="navy" />
+                <StatCard title="Unique Students" value={uniqueStudents.toLocaleString()} icon={GraduationCap} color="navy" />
                 <StatCard title="Total Achievements" value={totalAchievements} icon={Trophy} color="teal" />
                 <StatCard title="Approved" value={totalApproved} icon={CheckCircle} color="emerald" />
                 <StatCard title="Approval Rate" value={`${approvalRate}%`} icon={TrendingUp} color="amber" />

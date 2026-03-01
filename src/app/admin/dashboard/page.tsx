@@ -1,5 +1,6 @@
 ﻿"use client";
 
+import { useMemo } from "react";
 import { Users, Trophy, TrendingUp, Clock } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatCard } from "@/components/shared/StatCard";
@@ -7,8 +8,16 @@ import { DataTable, StatusBadge, CategoryBadge, Column } from "@/components/shar
 import { ChartWrapper, CustomBarChart, CustomPieChart, CustomAreaChart } from "@/components/shared/ChartComponents";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { currentAdmin, achievements, pendingAchievements, categoryStats, departmentStats, topStudents, monthlyStats } from "@/lib/dummy-data";
 import { Achievement, DepartmentStats } from "@/types";
+import {
+    useAdminAuth,
+    useAllAchievements,
+    computeCategoryStats,
+    computeMonthlyStats,
+    computeDepartmentStats,
+    computeTopStudents,
+    profileToUser,
+} from "@/lib/hooks";
 
 const achievementColumns: Column<Achievement>[] = [
     {
@@ -38,30 +47,55 @@ const deptColumns: Column<DepartmentStats>[] = [
     { key: "totalPoints", label: "Total Pts", sortable: true, render: (val) => <span className="text-xs font-semibold text-[#20376b]">{String(val)}</span> },
 ];
 
-const pieData = categoryStats.map((c) => ({ name: c.category, value: c.count }));
-const areaData = monthlyStats.map((m) => ({ name: m.month, Total: m.total, Approved: m.approved, Pending: m.pending }));
-const barDataDept = departmentStats.map((d) => ({ name: d.department.split(" ")[0], Points: d.totalPoints, "Achievements x30": d.totalAchievements * 30 }));
-
 export default function AdminDashboard() {
-    const totalAchievements = achievements.length;
-    const totalApproved = achievements.filter((a) => a.status === "approved").length;
-    const approvalRate = Math.round((totalApproved / totalAchievements) * 100);
+    const { admin, loading: loadingAuth } = useAdminAuth();
+    const { achievements, loading: loadingData } = useAllAchievements();
+
+    const categoryStats = useMemo(() => computeCategoryStats(achievements), [achievements]);
+    const monthlyStats = useMemo(() => computeMonthlyStats(achievements), [achievements]);
+    const departmentStats = useMemo(() => computeDepartmentStats(achievements), [achievements]);
+    const topStudents = useMemo(() => computeTopStudents(achievements), [achievements]);
+
+    const pending = achievements.filter((a) => a.status === "pending");
+    const approved = achievements.filter((a) => a.status === "approved");
+    const approvalRate = achievements.length > 0 ? Math.round((approved.length / achievements.length) * 100) : 0;
+    const uniqueStudents = new Set(achievements.map((a) => a.studentId)).size;
+
+    const pieData = categoryStats.map((c) => ({ name: c.category, value: c.count }));
+    const areaData = monthlyStats.map((m) => ({ name: m.month, Total: m.total, Approved: m.approved, Pending: m.pending }));
+    const barDataDept = departmentStats.map((d) => ({
+        name: d.department.split(" ")[0],
+        Points: d.totalPoints,
+        "Achievements x30": d.totalAchievements * 30,
+    }));
+
+    if (loadingAuth) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-slate-50">
+                <div className="flex flex-col items-center gap-3">
+                    <div className="h-8 w-8 rounded-full border-2 border-[#20376b] border-t-transparent animate-spin" />
+                    <p className="text-sm text-slate-500">Loading...</p>
+                </div>
+            </div>
+        );
+    }
+
+    if (!admin) return null;
 
     return (
-        <DashboardLayout user={currentAdmin} role="admin" pendingCount={pendingAchievements.length}>
+        <DashboardLayout user={profileToUser(admin)} role="admin" pendingCount={pending.length}>
             <div className="mb-6">
                 <h1 className="text-xl font-bold text-slate-900">Admin Dashboard</h1>
                 <p className="text-sm text-slate-500 mt-0.5">Overview of student achievements and platform activity.</p>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-6">
-                <StatCard title="Total Students" value="1,200" icon={Users} color="navy" trend={5} trendLabel="vs last year" />
-                <StatCard title="Total Achievements" value={totalAchievements} icon={Trophy} color="teal" />
-                <StatCard title="Pending Approvals" value={pendingAchievements.length} icon={Clock} color="amber" />
-                <StatCard title="Approval Rate" value={`${approvalRate}%`} icon={TrendingUp} color="emerald" trend={3} trendLabel="vs last month" />
+                <StatCard title="Active Students" value={uniqueStudents} icon={Users} color="navy" />
+                <StatCard title="Total Achievements" value={achievements.length} icon={Trophy} color="teal" />
+                <StatCard title="Pending Approvals" value={pending.length} icon={Clock} color="amber" />
+                <StatCard title="Approval Rate" value={`${approvalRate}%`} icon={TrendingUp} color="emerald" />
             </div>
 
-            {/* Charts Row 1 */}
             <div className="grid gap-5 lg:grid-cols-3 mb-6">
                 <div className="lg:col-span-2">
                     <ChartWrapper title="Monthly Submission Trend" description="Total, approved, and pending over time">
@@ -81,7 +115,6 @@ export default function AdminDashboard() {
                 </ChartWrapper>
             </div>
 
-            {/* Charts Row 2 */}
             <div className="grid gap-5 lg:grid-cols-3 mb-6">
                 <div className="lg:col-span-2">
                     <ChartWrapper title="Department Performance" description="Points and achievements by department">
@@ -118,11 +151,13 @@ export default function AdminDashboard() {
                                 <span className="text-xs font-bold text-[#20376b]">{s.totalPoints}</span>
                             </div>
                         ))}
+                        {topStudents.length === 0 && (
+                            <p className="text-xs text-slate-400 text-center py-4">No data yet.</p>
+                        )}
                     </CardContent>
                 </Card>
             </div>
 
-            {/* Department Stats Table */}
             <Card className="border-slate-200 shadow-sm mb-6">
                 <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-semibold text-slate-800">Department Statistics</CardTitle>
@@ -133,20 +168,25 @@ export default function AdminDashboard() {
                 </CardContent>
             </Card>
 
-            {/* All Achievements Table */}
             <Card className="border-slate-200 shadow-sm">
                 <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-semibold text-slate-800">All Achievement Submissions</CardTitle>
                     <p className="text-xs text-slate-500">Complete list of student submissions</p>
                 </CardHeader>
                 <CardContent>
-                    <DataTable
-                        columns={achievementColumns}
-                        data={achievements}
-                        searchable
-                        searchKey="studentName"
-                        searchPlaceholder="Search by student name..."
-                    />
+                    {loadingData ? (
+                        <div className="space-y-3">
+                            {[1, 2, 3].map((i) => <div key={i} className="h-10 bg-slate-100 rounded animate-pulse" />)}
+                        </div>
+                    ) : (
+                        <DataTable
+                            columns={achievementColumns}
+                            data={achievements}
+                            searchable
+                            searchKey="studentName"
+                            searchPlaceholder="Search by student name..."
+                        />
+                    )}
                 </CardContent>
             </Card>
         </DashboardLayout>

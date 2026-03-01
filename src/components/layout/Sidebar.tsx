@@ -20,6 +20,7 @@ import { UserRole, NavItem } from "@/types";
 const studentNav: NavItem[] = [
     { label: "Dashboard", href: "/student/dashboard", icon: "LayoutDashboard" },
     { label: "Achievements", href: "/student/achievements", icon: "Trophy" },
+    { label: "Analytics", href: "/student/analytics", icon: "BarChart2" },
 ];
 
 const adminNav: NavItem[] = [

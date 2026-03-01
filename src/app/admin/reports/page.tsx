@@ -17,15 +17,16 @@ import {
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { currentAdmin, achievements } from "@/lib/dummy-data";
 import { Achievement, AchievementCategory, AchievementStatus } from "@/types";
-import { cn } from "@/lib/utils";
+import {
+    useAdminAuth,
+    useAllAchievements,
+    profileToUser,
+} from "@/lib/hooks";
 
 const categories: (AchievementCategory | "All")[] = [
     "All", "Academic", "Research", "Sports", "Cultural", "Co-Curricular", "Professional",
 ];
-
-const departments = ["All", "Computer Science & Engineering", "Electronics & Communication", "Mechanical Engineering", "Civil Engineering", "Electrical Engineering"];
 
 const statuses: (AchievementStatus | "All")[] = ["All", "approved", "pending", "rejected"];
 
@@ -51,7 +52,15 @@ const achievementColumns: Column<Achievement>[] = [
     { key: "status", label: "Status", render: (_, row) => <StatusBadge status={row.status} /> },
 ];
 
+function getUniqueDepartments(achievements: Achievement[]): string[] {
+    const depts = Array.from(new Set(achievements.map((a) => a.department).filter(Boolean)));
+    return ["All", ...depts];
+}
+
 export default function ReportsPage() {
+    const { admin, loading: loadingAuth } = useAdminAuth();
+    const { achievements, loading: loadingData } = useAllAchievements();
+
     const [dept, setDept] = useState("All");
     const [category, setCategory] = useState<AchievementCategory | "All">("All");
     const [status, setStatus] = useState<AchievementStatus | "All">("All");
@@ -59,6 +68,8 @@ export default function ReportsPage() {
     const [toDate, setToDate] = useState("");
     const [generating, setGenerating] = useState(false);
     const [generated, setGenerated] = useState(false);
+
+    const departments = getUniqueDepartments(achievements);
 
     const filtered = achievements.filter((a) => {
         const matchDept = dept === "All" || a.department === dept;
@@ -71,7 +82,7 @@ export default function ReportsPage() {
 
     const handleGenerate = async () => {
         setGenerating(true);
-        await new Promise((r) => setTimeout(r, 1500));
+        await new Promise((r) => setTimeout(r, 800));
         setGenerating(false);
         setGenerated(true);
     };
@@ -113,15 +124,27 @@ export default function ReportsPage() {
         const html = `<!DOCTYPE html><html><head><title>NBA Report</title>
 <style>body{font-family:sans-serif;padding:24px}h2{margin-bottom:8px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #ccc;padding:6px 10px;text-align:left}th{background:#f1f5f9}tr:nth-child(even){background:#f8fafc}</style>
 </head><body><h2>NBA Criterion 4 – Achievement Report</h2>
-<p style="font-size:12px;color:#64748b">Generated: ${new Date().toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"})} · ${filtered.length} records</p>
+<p style="font-size:12px;color:#64748b">Generated: ${new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })} · ${filtered.length} records</p>
 <table><thead><tr><th>Student</th><th>Title</th><th>Category</th><th>Department</th><th>Date</th><th>Points</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
         const win = window.open("", "_blank");
         if (win) { win.document.write(html); win.document.close(); win.print(); }
     };
 
+    if (loadingAuth) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-slate-50">
+                <div className="flex flex-col items-center gap-3">
+                    <div className="h-8 w-8 rounded-full border-2 border-[#20376b] border-t-transparent animate-spin" />
+                    <p className="text-sm text-slate-500">Loading...</p>
+                </div>
+            </div>
+        );
+    }
+
+    if (!admin) return null;
+
     return (
-        <DashboardLayout user={currentAdmin} role="admin">
-            {/* Header */}
+        <DashboardLayout user={profileToUser(admin)} role="admin">
             <div className="mb-6">
                 <h1 className="text-xl font-bold text-slate-900">Reports</h1>
                 <p className="text-sm text-slate-500 mt-0.5">
@@ -130,7 +153,6 @@ export default function ReportsPage() {
             </div>
 
             <div className="grid gap-5 lg:grid-cols-3">
-                {/* Filters Panel */}
                 <Card className="border-slate-200 shadow-sm h-fit">
                     <CardHeader className="pb-3">
                         <div className="flex items-center gap-2">
@@ -139,7 +161,6 @@ export default function ReportsPage() {
                         </div>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                        {/* Department */}
                         <div className="space-y-1.5">
                             <Label className="text-xs font-medium text-slate-700">Department</Label>
                             <Select value={dept} onValueChange={setDept}>
@@ -154,7 +175,6 @@ export default function ReportsPage() {
                             </Select>
                         </div>
 
-                        {/* Category */}
                         <div className="space-y-1.5">
                             <Label className="text-xs font-medium text-slate-700">Category</Label>
                             <Select value={category} onValueChange={(v) => setCategory(v as typeof category)}>
@@ -169,7 +189,6 @@ export default function ReportsPage() {
                             </Select>
                         </div>
 
-                        {/* Status */}
                         <div className="space-y-1.5">
                             <Label className="text-xs font-medium text-slate-700">Status</Label>
                             <Select value={status} onValueChange={(v) => setStatus(v as typeof status)}>
@@ -186,7 +205,6 @@ export default function ReportsPage() {
 
                         <Separator className="my-1" />
 
-                        {/* Date Range */}
                         <div className="space-y-1.5">
                             <Label className="text-xs font-medium text-slate-700 flex items-center gap-1">
                                 <Calendar className="h-3 w-3" /> Date Range
@@ -205,10 +223,9 @@ export default function ReportsPage() {
 
                         <Separator className="my-1" />
 
-                        {/* Actions */}
                         <Button
                             onClick={handleGenerate}
-                            disabled={generating}
+                            disabled={generating || loadingData}
                             className="w-full bg-[#20376b] hover:bg-[#1a2d54] text-white h-9 text-sm"
                         >
                             {generating ? (
@@ -230,9 +247,7 @@ export default function ReportsPage() {
                     </CardContent>
                 </Card>
 
-                {/* Report Results */}
                 <div className="lg:col-span-2 space-y-4">
-                    {/* Summary card if generated */}
                     {generated && (
                         <Card className="border-emerald-200 bg-emerald-50/50">
                             <CardContent className="py-4 px-6">
@@ -256,7 +271,6 @@ export default function ReportsPage() {
                         </Card>
                     )}
 
-                    {/* Active filters summary */}
                     <div className="flex flex-wrap gap-2 items-center">
                         <span className="text-xs text-slate-500">Active filters:</span>
                         {dept !== "All" && <Badge variant="outline" className="text-[10px]">{dept.split(" ")[0]}</Badge>}
@@ -277,13 +291,19 @@ export default function ReportsPage() {
                             </div>
                         </CardHeader>
                         <CardContent>
-                            <DataTable
-                                columns={achievementColumns}
-                                data={filtered}
-                                searchable
-                                searchKey="studentName"
-                                searchPlaceholder="Search by student..."
-                            />
+                            {loadingData ? (
+                                <div className="space-y-3">
+                                    {[1, 2, 3].map((i) => <div key={i} className="h-10 bg-slate-100 rounded animate-pulse" />)}
+                                </div>
+                            ) : (
+                                <DataTable
+                                    columns={achievementColumns}
+                                    data={filtered}
+                                    searchable
+                                    searchKey="studentName"
+                                    searchPlaceholder="Search by student..."
+                                />
+                            )}
                         </CardContent>
                     </Card>
                 </div>

@@ -12,7 +12,7 @@ export interface Column<T> {
     key: keyof T | string;
     label: string;
     sortable?: boolean;
-    render?: (value: unknown, row: T) => React.ReactNode;
+    render?: (value: unknown, row: T, index?: number) => React.ReactNode;
     className?: string;
 }
 
@@ -131,7 +131,7 @@ export function DataTable<T>({
                                     {columns.map((col) => (
                                         <td key={String(col.key)} className={cn("px-4 py-3 text-slate-700", col.className)}>
                                             {col.render
-                                                ? col.render(getCellValue(row, String(col.key)), row)
+                                                ? col.render(getCellValue(row, String(col.key)), row, idx)
                                                 : String(getCellValue(row, String(col.key)) ?? "-")}
                                         </td>
                                     ))}
